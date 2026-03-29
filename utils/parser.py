@@ -85,32 +85,80 @@ def parse_workout_log(text):
 # EXERCISE
 #################################
 
-def parse_exercise(text):
-    # Initialize storage
-    result_dict = {}
-
+def separate_name_from_movements(text):
     # Get the name by splitting by hyphen
     name, movements = text.split(' - ', 1)
     # Clean name by whitespace
     name = name.strip()
 
+    return name, movements
+
+def get_exercise_id(name):
     # Make id
     id = name.lower().replace(' ', '_')
-    result_dict['id'] = id
 
-    # Add the movements to result dictionary
-    result_dict['movements'] = []
+    return id
 
-    # Add movement name and sets
-    movement_dict = {'name': name, 'sets': []}
-    result_dict['movements'].append(movement_dict)
+def convert_superset_to_sets(text):
+    # Separate name from movements
+    name, movements = separate_name_from_movements(text)
 
-    # Get all sets
-    sets = re.split(r',\s*', movements)
-    for set_text in sets:
-        result_dict['movements'][0]['sets'].append(parse_set(set_text))
+    # Split name by delimiter
+    name_list = [n.strip() for n in name.split(SUPERSET_DELIM)]
+    # Split movements by comma
+    movement_list = re.split(r',\s*', movements)
 
-    return result_dict
+    # Initialize result list
+    result_list = [f'{name} -' for name in name_list]
+    # Iterate over each movement
+    for movement in movement_list:
+        # Separate load from reps
+        load, rep = separate_load_from_rep(movement)
+        # Separate the load and rep by superset delimiter
+        load_list = [l.strip() for l in load.split(SUPERSET_DELIM)]
+        rep_list = [r.strip() for r in rep.split(SUPERSET_DELIM)]
+
+        # Append the load and rep to the corresponding exercise string in the result list
+        for idx, (l, r) in enumerate(zip(load_list, rep_list)):
+            result_list[idx] += f' {l} {r},'
+
+    # Clean trailing commas
+    result_list = [s.rstrip(',') for s in result_list]
+
+    return result_list
+
+def parse_exercise(text):
+    # Initialize storage
+    result_dict = {}
+
+    # Convert superset to sets if there is a superset delimiter in the text
+    if SUPERSET_DELIM in text:
+        exercise_list = convert_superset_to_sets(text)
+    else:
+        exercise_list = [text]
+
+    for exercise_idx, exercise in enumerate(exercise_list):
+        # Get the name by splitting by hyphen
+        name, movements = separate_name_from_movements(exercise)
+
+        # Make id
+        id = get_exercise_id(name)
+        # Add id to result
+        result_dict['id'] = id
+
+        # Add the movements to result dictionary
+        result_dict['movements'] = []
+
+        # Add movement name and sets
+        movement_dict = {'name': name, 'sets': []}
+        result_dict['movements'].append(movement_dict)
+
+        # Get all sets
+        sets = re.split(r',\s*', movements) # split by comma and space(s)
+        for set_text in sets:
+            result_dict['movements'][exercise_idx]['sets'].append(parse_set(set_text))
+
+        return result_dict
 
 #################################
 # MOVEMENT
@@ -198,7 +246,7 @@ def parse_set(text, previous_load=None):
 
     # Add load to subset if drop set or not
     result['subsets']['load'] = load
-    result['subsets']['reps'] = parse_subset(rep)
+    result['subsets']['reps'] = parse_subset(rep) if is_unit_set else parse_dropset(rep)
 
     return result
 
