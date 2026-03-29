@@ -81,6 +81,33 @@ def parse_workout_log(text):
         'weight': grouped_log.get('weight', [])
     }
 
+def sanitize_exercise(text):
+    # Strip tally marks (trailing slashes)
+    text = re.sub(r'\s*/+\s*$', '', text)
+
+    # Strip (skip) markers
+    text = re.sub(r'\s*\(skip\)\s*', '', text)
+
+    # Expand NxR shorthand
+    def expand_nx(match):
+        n = int(match.group(1))
+        r = match.group(2)
+        return ', '.join([r] * n)
+
+    # Make the weight unit union pattern
+    WEIGHT_UNITS_PATTERN = '|'.join(WEIGHT_UNITS)
+    # Search for nxr patterns and replace them accordingly but not for weights
+    text = re.sub(
+        rf'(?<!\+)(\d+)x(\d+)(?!\s*(?:{WEIGHT_UNITS_PATTERN}))', 
+        expand_nx, 
+        text
+    )
+
+    # Fix stray ", F" → append F to previous rep
+    text = re.sub(r'(\d),\s*F\b', r'\1F', text)
+
+    return text
+
 #################################
 # EXERCISE
 #################################
@@ -129,7 +156,10 @@ def convert_superset_to_sets(text):
 
 def parse_exercise(text):
     # Initialize storage
-    result_dict = {}
+    result_dict = {
+        'id': None,
+        'movements': []
+    }
 
     # Convert superset to sets if there is a superset delimiter in the text
     if SUPERSET_DELIM in text:
@@ -137,17 +167,13 @@ def parse_exercise(text):
     else:
         exercise_list = [text]
 
+    # Build the id from all movement names
+    names = [separate_name_from_movements(e)[0] for e in exercise_list]
+    result_dict['id'] = '_'.join(get_exercise_id(n) for n in names) + '_set'
+
     for exercise_idx, exercise in enumerate(exercise_list):
         # Get the name by splitting by hyphen
         name, movements = separate_name_from_movements(exercise)
-
-        # Make id
-        id = get_exercise_id(name)
-        # Add id to result
-        result_dict['id'] = id
-
-        # Add the movements to result dictionary
-        result_dict['movements'] = []
 
         # Add movement name and sets
         movement_dict = {'name': name, 'sets': []}
@@ -155,10 +181,21 @@ def parse_exercise(text):
 
         # Get all sets
         sets = re.split(r',\s*', movements) # split by comma and space(s)
+        # Initialize previous load
+        previous_load = None
+        # Iterate over each set and parse it
         for set_text in sets:
-            result_dict['movements'][exercise_idx]['sets'].append(parse_set(set_text))
+            # Separate load from rep
+            load, rep = separate_load_from_rep(text)
+            if load is None:
+                load = previous_load
+            else:
+                previous_load = load
 
-        return result_dict
+            # Parse the set and append to movement
+            result_dict['movements'][exercise_idx]['sets'].append(parse_set(load, rep))
+
+    return result_dict
 
 #################################
 # MOVEMENT
@@ -227,15 +264,8 @@ def is_set_unit(text):
     # Check if there is no dropset delimiter in text
     return DROPSET_DELIM not in text
 
-def parse_set(text, previous_load=None):
-    # Separate load from rep
-    load, rep = separate_load_from_rep(text)
-    # Check if rep is unit or drop
+def parse_set(load, rep):
     is_unit_set = is_set_unit(rep)
-    print(f'{text} is a {"unit" if is_unit_set else "drop"} set!')
-
-    if previous_load:
-        load = previous_load
 
     # Initialize storage
     result = {}
